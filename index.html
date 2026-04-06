@@ -1311,6 +1311,68 @@
         trackPresence();
         trackVisitor();
 
+        // Optimized listeners: Only fetch relevant date data for live updates
+        db.ref("disabledNumbers/" + targetStr).on("value", (s) => {
+          disabledNumbers[targetStr] = s.val() || {};
+          renderTickets();
+        });
+
+        db.ref("dateSettings/" + targetStr).on("value", (s) => {
+          calDateSettings[targetStr] = s.val() || {};
+          renderCalendar();
+          renderCard();
+          updateStatusBanner();
+          updateSlotBanner();
+
+          if (document.getElementById("form-card").classList.contains("show")) {
+            const editDate = editingTicketId
+              ? (myTickets.find((x) => x.id === editingTicketId) || {}).date ||
+                targetStr
+              : targetStr;
+            applySlotButtonStates(editDate, selectedTime);
+
+            // Clear selectedTime if the session got disabled for the target date
+            const _ds = calDateSettings[targetStr] || {};
+            if (selectedTime === "AM" && _ds.amEnabled === false)
+              selectedTime = null;
+            if (selectedTime === "PM" && _ds.pmEnabled === false)
+              selectedTime = null;
+          }
+        });
+
+        db.ref("takenNumbers/" + targetStr).on("value", (s) => {
+          takenNumbersData[targetStr] = s.val() || {};
+          renderCard();
+          updateSlotBanner();
+          const formOpen = document
+            .getElementById("form-card")
+            .classList.contains("show");
+          if (formOpen) {
+            const editDate = editingTicketId
+              ? (myTickets.find((x) => x.id === editingTicketId) || {}).date ||
+                targetStr
+              : targetStr;
+            applySlotButtonStates(editDate, selectedTime);
+
+            // Clear selectedTime if its session just became unavailable
+            const amNowFull =
+              getTakenCountFromAtomic(editDate, "AM") >= getLimitAm() ||
+              slotConfig.amEnabled === false;
+            const pmNowFull =
+              getTakenCountFromAtomic(editDate, "PM") >= getLimitPm() ||
+              slotConfig.pmEnabled === false;
+            if (selectedTime === "AM" && amNowFull) selectedTime = null;
+            if (selectedTime === "PM" && pmNowFull) selectedTime = null;
+          }
+        });
+
+        // Fetch other dates for calendar view (one-time fetch to avoid constant large sync)
+        db.ref("dateSettings").once("value", (s) => {
+          const allSettings = s.val() || {};
+          Object.assign(calDateSettings, allSettings);
+          renderCalendar();
+        });
+
         // Hide loading overlay
         document.getElementById("time-sync-overlay").classList.add("hide");
 
@@ -1777,69 +1839,9 @@
         renderTickets();
       });
 
-      db.ref("disabledNumbers").on("value", (s) => {
-        disabledNumbers = s.val() || {};
-        renderTickets();
-      });
+      // Removed global listeners to fix slow loading.
+      // Now using optimized date-specific listeners in initializeAfterSync().
 
-      // FIX 4: takenNumbers is now the single source of truth for slot counts.
-      // The tickets listener no longer writes back to slots/ (removed that sync).
-
-      let isFirstDateSettingsLoad = true;
-      db.ref("dateSettings").on("value", (s) => {
-        calDateSettings = s.val() || {};
-
-        if (!isFirstDateSettingsLoad) {
-          toast("📅 Schedule updated — refreshing...");
-        }
-        isFirstDateSettingsLoad = false;
-
-        renderCalendar();
-        renderCard();
-        updateStatusBanner();
-        updateSlotBanner();
-
-        if (document.getElementById("form-card").classList.contains("show")) {
-          const editDate = editingTicketId
-            ? (myTickets.find((x) => x.id === editingTicketId) || {}).date ||
-              targetStr
-            : targetStr;
-          applySlotButtonStates(editDate, selectedTime);
-
-          // Clear selectedTime if the session got disabled for the target date
-          const _ds = calDateSettings[targetStr] || {};
-          if (selectedTime === "AM" && _ds.amEnabled === false)
-            selectedTime = null;
-          if (selectedTime === "PM" && _ds.pmEnabled === false)
-            selectedTime = null;
-        }
-      });
-
-      db.ref("takenNumbers").on("value", (s) => {
-        takenNumbersData = s.val() || {};
-        renderCard();
-        updateSlotBanner();
-        const formOpen = document
-          .getElementById("form-card")
-          .classList.contains("show");
-        if (formOpen) {
-          const editDate = editingTicketId
-            ? (myTickets.find((x) => x.id === editingTicketId) || {}).date ||
-              targetStr
-            : targetStr;
-          applySlotButtonStates(editDate, selectedTime);
-
-          // Clear selectedTime if its session just became unavailable
-          const amNowFull =
-            getTakenCountFromAtomic(editDate, "AM") >= getLimitAm() ||
-            slotConfig.amEnabled === false;
-          const pmNowFull =
-            getTakenCountFromAtomic(editDate, "PM") >= getLimitPm() ||
-            slotConfig.pmEnabled === false;
-          if (selectedTime === "AM" && amNowFull) selectedTime = null;
-          if (selectedTime === "PM" && pmNowFull) selectedTime = null;
-        }
-      });
 
       async function loadMyTickets() {
         // Show loading state immediately
